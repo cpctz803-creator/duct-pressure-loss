@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ダクト摩擦損失計算ツール</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f7f6; padding: 20px; color: #333; }
+        .container { max-width: 500px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h2 { text-align: center; color: #2c3e50; margin-bottom: 20px; border-bottom: 2px solid #3498db; pb: 10px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 0.9em; }
+        input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        .row { display: flex; gap: 10px; }
+        .row > div { flex: 1; }
+        .result-card { margin-top: 25px; padding: 15px; border-radius: 8px; background-color: #eef2f3; border-left: 5px solid #3498db; }
+        .result-item { display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px dashed #ccc; padding-bottom: 4px; }
+        .result-val { font-weight: bold; color: #2c3e50; }
+        .verdict { text-align: center; font-weight: bold; margin-top: 15px; padding: 10px; border-radius: 5px; }
+        .good { background-color: #d4edda; color: #155724; }
+        .warn { background-color: #fff3cd; color: #856404; }
+        .danger { background-color: #f8d7da; color: #721c24; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>ダクト損失計算</h2>
+    
+    <div class="form-group">
+        <label>風量 [m³/h]</label>
+        <input type="number" id="q_m3h" value="1000" oninput="calculate()">
+    </div>
+
+    <div class="form-group">
+        <label>ダクト形状</label>
+        <select id="shape" onchange="toggleShape()">
+            <option value="round">丸ダクト (Round)</option>
+            <option value="rect">角ダクト (Rectangular)</option>
+        </select>
+    </div>
+
+    <!-- 丸ダクト用入力 -->
+    <div id="round-input" class="form-group">
+        <label>直径 [mm]</label>
+        <input type="number" id="dia_mm" value="250" oninput="calculate()">
+    </div>
+
+    <!-- 角ダクト用入力 -->
+    <div id="rect-input" class="form-group hidden">
+        <div class="row">
+            <div>
+                <label>幅 [mm]</label>
+                <input type="number" id="width_mm" value="300" oninput="calculate()">
+            </div>
+            <div>
+                <label>高さ [mm]</label>
+                <input type="number" id="height_mm" value="250" oninput="calculate()">
+            </div>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label>絶対粗さ [mm] (亜鉛鉄板は0.18)</label>
+        <input type="number" id="epsilon" value="0.18" step="0.01" oninput="calculate()">
+    </div>
+
+    <div class="result-card">
+        <div class="result-item"><span>相当直径:</span> <span class="result-val" id="res_de">-</span> mm</div>
+        <div class="result-item"><span>実流速:</span> <span class="result-val" id="res_v">-</span> m/s</div>
+        <div class="result-item"><span>単位摩擦損失:</span> <span class="result-val" id="res_loss">-</span> Pa/m</div>
+        <div id="verdict" class="verdict">数値を入力してください</div>
+    </div>
+</div>
+
+<script>
+    function toggleShape() {
+        const shape = document.getElementById('shape').value;
+        document.getElementById('round-input').classList.toggle('hidden', shape !== 'round');
+        document.getElementById('rect-input').classList.toggle('hidden', shape !== 'rect');
+        calculate();
+    }
+
+    function calculate() {
+        const q_m3h = parseFloat(document.getElementById('q_m3h').value);
+        const epsilon = parseFloat(document.getElementById('epsilon').value);
+        const shape = document.getElementById('shape').value;
+        
+        if (!q_m3h || q_m3h <= 0) return;
+
+        const q_m3s = q_m3h / 3600;
+        let de_m, actual_area_m2;
+
+        if (shape === 'round') {
+            const dia_mm = parseFloat(document.getElementById('dia_mm').value);
+            if (!dia_mm) return;
+            de_m = dia_mm / 1000;
+            actual_area_m2 = Math.PI * Math.pow(de_m, 2) / 4;
+        } else {
+            const w_mm = parseFloat(document.getElementById('width_mm').value);
+            const h_mm = parseFloat(document.getElementById('height_mm').value);
+            if (!w_mm || !h_mm) return;
+            const a = w_mm / 1000;
+            const b = h_mm / 1000;
+            // Huebscherの式
+            de_m = 1.30 * Math.pow(a * b, 0.625) / Math.pow(a + b, 0.25);
+            actual_area_m2 = a * b;
+        }
+
+        // 物理定数
+        const rho = 1.2;
+        const nu = 1.5e-5;
+
+        // 摩擦損失計算用の換算流速
+        const area_e = Math.PI * Math.pow(de_m, 2) / 4;
+        const v_e = q_m3s / area_e;
+        const v_actual = q_m3s / actual_area_m2;
+
+        // レイノルズ数
+        const reynolds = (v_e * de_m) / nu;
+
+        // 摩擦係数 (Altshulの近似式)
+        const lambda_f = 0.11 * Math.pow((epsilon / (de_m * 1000)) + (68 / reynolds), 0.25);
+
+        // 単位摩擦損失 [Pa/m]
+        const dynamic_pressure_e = 0.5 * rho * Math.pow(v_e, 2);
+        const pressure_loss = lambda_f * (1 / de_m) * dynamic_pressure_e;
+
+        // 結果表示
+        document.getElementById('res_de').innerText = (de_m * 1000).toFixed(1);
+        document.getElementById('res_v').innerText = v_actual.toFixed(2);
+        document.getElementById('res_loss').innerText = pressure_loss.toFixed(3);
+
+        // 判定
+        const verdictDiv = document.getElementById('verdict');
+        verdictDiv.className = 'verdict';
+        if (pressure_loss < 0.6) {
+            verdictDiv.innerText = "判定: 低静圧・余裕あり";
+            verdictDiv.classList.add('good');
+        } else if (pressure_loss <= 1.5) {
+            verdictDiv.innerText = "判定: 標準的な設計範囲";
+            verdictDiv.classList.add('good');
+        } else if (pressure_loss <= 2.0) {
+            verdictDiv.innerText = "判定: やや損失大";
+            verdictDiv.classList.add('warn');
+        } else {
+            verdictDiv.innerText = "判定: 損失過大・サイズアップ推奨";
+            verdictDiv.classList.add('danger');
+        }
+    }
+
+    // 初期計算
+    calculate();
+</script>
+
+</body>
+</html>
